@@ -7,6 +7,7 @@ import argparse
 import paramiko
 import threading
 import os
+import sys
 
 botnet = []
 class SSHClient:
@@ -90,8 +91,12 @@ def main():
                 botnet_command(cmd2, True)
 
 if __name__ == '__main__':
-    print("First please execute python Master.py -h!!!"+'\n'+'\n')
-    main()
+    try:
+        print("First please execute python Master.py -h!!!"+'\n'+'\n')
+        main()
+    except KeyboardInterrupt:
+        print("exit")
+        sys.exit()
     #cmd1="ulimit -n 1000000"
     #botnet_command(command=cmd)
     #cmd_th1=threading.Thread(target=botnet_command,args=(cmd1))
