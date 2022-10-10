@@ -1,3 +1,4 @@
+###Author:Meng xiangqiao
 ### Introduction
 These scripts can achieve DOS attack by different protocols flood on the linux platform. 
 It mainly uses scapy, python3-nmap, netifaces and threading.

@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+llllllllllll#!/usr/bin/bash
 echo "sending files:" > test.log
 #n=`cat demoIplist.txt | wc -l` #分发的ip数量
 n=5

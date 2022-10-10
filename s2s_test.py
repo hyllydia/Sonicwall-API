@@ -746,15 +746,15 @@ class DEMO_api:
 
 
 if __name__=="__main__":
-    ipstr='10.7.100.27'
+    ipstr='10.7.5.137'
     username='admin'
-    password='password'
+    password='sonicwall'
     test=DEMO_api(username=username,password=password,ipstr=ipstr)
     test.api_login(username=username,password=password)
 
     #Add vpn tunnels
     start_time=datetime.datetime.now()
-    test.post_s2s_vpn_IKEv2('10.7.100.202',1,3,1)
+    test.post_s2s_vpn_IKEv2(ipstr=ipstr, sn=1,en=3000,step=100)
     #test.post_vpn_chained_3rd(ipstr=ipstr, sn=10,en=5500,step=100)
     end_time=datetime.datetime.now()
     print(end_time-start_time)

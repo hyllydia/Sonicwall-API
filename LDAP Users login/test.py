@@ -6,6 +6,7 @@
 import subprocess
 import os
 import datetime
+import sys
 import telnetlib
 
 def deal_ab(a,b):
@@ -16,21 +17,25 @@ def deal_ab(a,b):
 def add_virtual():
     a=1
     b=1
-    for i in range(1,2001):
+    for i in range(1,3001):
         print(i)
         a,b = deal_ab(a,b)
-        cmd = "ifconfig ens192:{} 172.1.{}.{}/16".format(i,a,b)
+        cmd = "ifconfig ens192:{} 172.21.{}.{}/16".format(i,a,b)
         #cmd =("ifconfig ens192:%d 172.1.%d.%d/16" %(i,a,b))
         subprocess.Popen(cmd,shell=True)
-        ip_login = "172.1.{}.{}".format(a,b)
+        ip_login = "172.21.{}.{}".format(a,b)
         username = "test{}".format(i)
         os.system("python userlogin.py {} {}".format(ip_login,username))
         #x = ("%d %d" % (a,b))
         #print(x)
         b+=1
 if __name__=="__main__":
-    start_time = datetime.datetime.now()
-    print("start:{}".format(start_time))
-    add_virtual()
-    end_time = datetime.datetime.now()
-    print("end:{}".format(end_time))
+    try:
+        start_time = datetime.datetime.now()
+        print("start:{}".format(start_time))
+        add_virtual()
+        end_time = datetime.datetime.now()
+        print("end:{}".format(end_time))
+    except KeyboardInterrupt:
+        print("exit")
+        sys.exit(0)

@@ -1,0 +1,222 @@
+#!groovy
+
+pipeline {
+    agent { label 'master' }
+    environment {
+        GITREPO = '192.168.0.100:8011'
+        USER = "dev"
+        CREDENTIALSID = "aac47fba-17c9-4426-9f2d-868eaebdc92c"
+        VER = '21.02.0-RC1'
+    }
+    stages {
+        stage ('Build') {
+            parallel {
+
+              stage('Build gaea') {
+                   agent { label 'Controller15.2' }
+
+                   steps {
+                        sh '''
+                        sudo rm -rf ${WORKSPACE}/src/gaea
+                        '''
+                        dir('src/gaea') {
+                            git(url: "ssh://${USER}@${GITREPO}/gaea", branch: 'master', credentialsId: "${CREDENTIALSID}")
+                        }
+
+                        sh '''#!/bin/bash -l
+                           set -ex
+                           verdate=`date +%Y.%m.%d.%H%M%S`
+                           verpath="aiwan-gaea_${VER}-${verdate}"
+                           sudo rm -rf ${WORKSPACE}/src/pkg/aiwan-gaea_*
+                           sudo rm -rf ${WORKSPACE}/src/gaea/ci/*.deb
+                           sudo mkdir  -p ${WORKSPACE}/src/pkg/${verpath}
+                           echo "Start to build gaea package"
+                           cd $WORKSPACE/src/gaea
+                           sudo ./build.sh ${VER}-${verdate}
+                           sudo mv ${WORKSPACE}/src/gaea/ci/aiwan-gaea*.deb ${WORKSPACE}/src/pkg/${verpath}/
+                           for name in aiwan-gaea
+                           do
+                               d="${name}_${VER}-${verdate}"
+                               sudo chmod 777 ${WORKSPACE}/src/pkg/${d} -R
+                               cd ${WORKSPACE}/src/pkg/${d}
+                               sudo cp ${WORKSPACE}/src/gaea/ci/upgrade/notes   RELEASENOTES
+                               n=`ls ${name}*.deb`
+                               sudo md5sum ${n} > ${n}.md5
+                           done
+                            '''
+                           archiveArtifacts allowEmptyArchive: true, artifacts: 'src/pkg/aiwan-gaea*/*.deb*,src/pkg/aiwan-gaea*/RELEASENOTES', fingerprint: true
+                    }
+                }
+
+                stage('build uranus') {
+                    agent { label 'Controller15.2' }
+                    steps {
+                        sh '''
+                        sudo rm -rf ${WORKSPACE}/src/uranus
+                        sudo rm -rf ${WORKSPACE}/src/pkg/*
+                        '''
+                        dir('src/mnemosyne'){
+                            git(url: "ssh://${USER}@${GITREPO}/mnemosyne", branch: 'master', credentialsId: "${CREDENTIALSID}")
+                        }
+                        dir('src/uranus') {
+                            git(url: "ssh://${USER}@${GITREPO}/uranus", branch: 'master', credentialsId: "${CREDENTIALSID}")
+                        }
+
+                        sh '''#!/bin/bash -l
+                        verdate=`date +%Y.%m.%d.%H%M%S`
+                        verpath="aiwan-uranus_${VER}-${verdate}"
+                        sudo rm -rf ${WORKSPACE}/src/pkg/aiwan-uranus_*
+                        sudo rm -rf ${WORKSPACE}/src/uranus/ci/*.deb
+                        sudo mkdir  -p ${WORKSPACE}/src/pkg/${verpath}
+                        cp ${WORKSPACE}/src/mnemosyne/libs/openflowj-3.2.1.onos.jar /home/jenkins/.m2/repository/org/onosproject/openflowj/3.2.1.onos/
+                        echo "Start build aiwan uranus"
+                        cd $WORKSPACE/src/uranus
+						ret=`sudo docker ps -a | grep uranus_deb | wc -l`
+						if [ $ret -eq 1 ];then
+							sudo docker rm -vf uranus_deb
+						fi
+						sudo docker run -itd --name uranus_deb -v $WORKSPACE/src/uranus:/root/uranus -v $WORKSPACE/src/mnemosyne:/root/mnemosyne -v /home/jenkins/.m2:/root/.m2 uranus/build:v1
+                        sudo docker exec -w /root/uranus -i uranus_deb ./build ${VER}-${verdate}
+                        if [ "$?" -ne 0 ];then
+                            error 'Build aiwan uranus failure!'
+                        fi
+						sudo rm -vf uranus_deb
+                        sudo cp ${WORKSPACE}/src/uranus/ci/docker/Dockerfile ${WORKSPACE}/src/pkg/${verpath}/
+                        sudo mv ${WORKSPACE}/src/uranus/ci/aiwan-uranus*.deb ${WORKSPACE}/src/pkg/${verpath}/
+                        for name in aiwan-uranus
+                        do
+                           d="${name}_${VER}-${verdate}"
+                           sudo chmod 777 ${WORKSPACE}/src/pkg/${d} -R
+                           cd ${WORKSPACE}/src/pkg/${d}
+                           sudo touch RELEASENOTES
+                           n=`ls ${name}*.deb`
+                           sudo md5sum ${n} > ${n}.md5
+                        done
+                        '''
+
+                        archiveArtifacts allowEmptyArchive: true, artifacts: 'src/pkg/aiwan-uranus*/*.deb*,src/pkg/aiwan-uranus*/Dockerfile,src/pkg/aiwan-uranus*/RELEASENOTES', fingerprint: true
+                    }
+                }
+            }
+        }
+
+        stage ('Deploy Uranus and gaea') {
+            parallel {
+                
+                stage ('deploy uranus ') {
+                    agent { label 'uranus_ft_new' }
+                    steps {
+                        sh '''
+                        rm -rf ${WORKSPACE}/deb/aiwan-uranus*.deb
+                        '''
+                        copyArtifacts filter: '**/aiwan-uranus*.deb,**/Dockerfile', target: 'deb', fingerprintArtifacts: true, flatten: true, projectName: '${JOB_NAME}', selector: specific('${BUILD_NUMBER}')
+
+                        sh '''#!/bin/bash
+                        cd ${WORKSPACE}/deb
+                        ver_u=`ls aiwan-uranus*`
+						ret=`sudo docker ps -a | grep controller_uranus | wc -l`
+						if [ $ret -eq 1 ];then
+							sudo docker rm -vf controller_uranus
+						fi
+						docker images |grep controller | awk '{print $3}' | xargs docker rmi -f
+						sudo docker build -t controller/uranus:v1 .
+                        sudo cp /opt/aiwan/ca/controller/controller_keystore.jks /opt/aiwan/uranus/config/certs/keystore.jks
+                        sudo cp /opt/aiwan/ca/controller/controller_truststore.jks /opt/aiwan/uranus/config/certs/truststore.jks
+                        sudo sed -i 's/localhost/172.17.0.1/g' /opt/aiwan/uranus/config/application.json
+                        sudo sed -i 's/authAddr": "https/authAddr": "http/g'  /opt/aiwan/uranus/config/application.json
+                        sudo sed -i "s/enabled/disabled/g" /opt/aiwan/uranus/config/application.json
+                        sudo service aiwan-uranus stop
+						sudo docker run -itd --name controller_uranus -v /var/log/:/var/log/ -v /opt/aiwan/uranus/config:/opt/aiwan/uranus/config/ -v /opt/aiwan/config:/opt/aiwan/config/ -p 6653:6653 -p 6633:6633 -p 6640:6640 -p 8181:8181 -p 8101:8101 -p 9876:9876 -p 5005:5005 -p 4335:4335 -p 6061:6061 controller/uranus:v1
+                        sleep 120s
+                        '''
+                    }
+                }
+
+                stage ('deploy gaea ') {
+                    agent { label 'uranus_ft_new' }
+                    steps {
+                        sh '''
+                        rm -rf ${WORKSPACE}/deb/aiwan-gaea*.deb
+                        '''
+                        copyArtifacts filter: '**/aiwan-gaea*.deb', target: 'deb', fingerprintArtifacts: true, flatten: true, projectName: '${JOB_NAME}', selector: specific('${BUILD_NUMBER}')
+
+                        sh '''#!/bin/bash
+                        cd ${WORKSPACE}/deb
+                        sudo systemctl stop aiwan-gaea
+                        mongo gaea --eval "db.dropDatabase()"
+                        ver=`ls aiwan-gaea*`
+                        sudo dpkg -i $ver
+                        sudo sed -i 's/poll-interval = 300000/poll-interval = 3000/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/poll-delay = 120000/poll-delay = 3000/g'  /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/ne-sync-all-interval = 600000/ne-sync-all-interval = 30000/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/reboot-sync-delay = 120000/reboot-sync-delay = 10000/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/area-selector-delay = 120000/area-selector-delay = 20000/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/area-select-interval = 300/area-select-interval = 10/g'  /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/link-select-interval = 30/link-select-interval = 10/g'  /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/link-select-duration = 300/link-select-duration = 30/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/collect-interval = 60000/collect-interval = 3000/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/tunnel-update-interval = 10000/tunnel-update-interval = 3000/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i 's/sync-switch = false/sync-switch = true/g' /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i "s#http://[^:]*:8500#http://127.0.0.1:8500#g" /opt/aiwan/gaea/config/application.conf
+                        sudo sed -i '/8500/{n;s#token = "[^"]*#token = "74b509cf-b46e-0744-9521-6c1b5f1b4f8e#;}' /opt/aiwan/gaea/config/application.conf
+                        sudo systemctl daemon-reload
+                        sudo service aiwan-gaea start
+                        sleep 120s
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage ('test') {
+            agent { label 'uranus_ft_new' }
+            steps {
+                sh '''
+                sudo rm -rf ${WORKSPACE}/src/erlang
+                sudo rm -rf ${WORKSPACE}/output
+                '''
+                dir('src/erlang') {
+                    git(url: "ssh://${USER}@${GITREPO}/erlang", branch: 'master', credentialsId: "${CREDENTIALSID}")
+                }
+                sh '''#!/bin/sh
+                echo "prepare netconf and openflow"
+                sudo pkill -f ConfigurationCenter.py
+                sudo pkill -f tool-1.0-SNAPSHOT.jar
+                sudo pkill -f AuthServer.py
+                sudo docker rm -f $(sudo docker ps -aq -f 'name=uranus_pt_ofswitch')
+                sudo java -Dorg.apache.sshd.registerBouncyCastle=false -jar ${WORKSPACE}/uranus/ci/tool-1.0-SNAPSHOT.jar --http-port 7006 --device-count 800 --starting-port 17830 > ${WORKSPACE}/uranus/ci/popnetconf.log 2>&1 &
+                sudo java -Xms1024m -Xmx4096m -Dorg.apache.sshd.registerBouncyCastle=false -jar ${WORKSPACE}/uranus/ci/tool-1.0-SNAPSHOT.jar --http-port 7007 --device-count 800 --callhome-flag true --callhome-ip 127.0.0.1 > /dev/null 2>&1 &
+                sudo python2 ${WORKSPACE}/uranus/ci/pt/aiwan-master/fake/ConfigurationCenter.py > ${WORKSPACE}/uranus/ci/configcenter.log 2>&1 &
+                sudo python2 ${WORKSPACE}/uranus/ci/pt/aiwan-master/fake/AuthServer.py > ${WORKSPACE}/uranus/ci/authServer.log 2>&1 &
+                sudo docker run -itd --name uranus_pt_ofswitch -p 6007:6007 uranus_pt_ofswitch
+                cd $WORKSPACE/src/erlang/third-party/aiwan-master/
+                if [ $(cmp -s client/controller.py $WORKSPACE/uranus/ci/pt/aiwan-master/client/controller.py) -o $(cmp -s client/device.py $WORKSPACE/uranus/ci/pt/aiwan-master/client/device.py) -o $(cmp -s client/rest.py $WORKSPACE/uranus/ci/pt/aiwan-master/client/rest.py) -o $(cmp -s core/settings.py $WORKSPACE/uranus/ci/pt/aiwan-master/core/settings.py) -o $(cmp -s fake/ConfigurationCenter.py $WORKSPACE/uranus/ci/pt/aiwan-master/fake/ConfigurationCenter.py) ];then 
+                   sudo cp client/controller.py $WORKSPACE/uranus/ci/pt/aiwan-master/client/; 
+                   sudo cp client/device.py $WORKSPACE/uranus/ci/pt/aiwan-master/client/;
+                   sudo cp client/rest.py $WORKSPACE/uranus/ci/pt/aiwan-master/client/;
+                   sudo cp core/settings.py $WORKSPACE/uranus/ci/pt/aiwan-master/core/;
+                   sudo cp fake/ConfigurationCenter.py $WORKSPACE/uranus/ci/pt/aiwan-master/fake/;
+                fi
+                sed -i "s/cb44168b-baf7-8f64-a1bb-e0723d7e8943/74b509cf-b46e-0744-9521-6c1b5f1b4f8e/g" $WORKSPACE/src/erlang/erlang/config/ft_uranus.yaml
+                sed -i "s/10.192.20.18:/10.192.20.16:/g" $WORKSPACE/src/erlang/erlang/libs/variables/InterfacePathVariables.py
+                sed -i 's/9673f18a-6ebc-cab6-e78f-6a343114ef52/74b509cf-b46e-0744-9521-6c1b5f1b4f8e/g' $WORKSPACE/src/erlang/erlang/libs/variables/InterfacePathVariables.py
+                sed -i "s/CONTROLLER_SEVER =.*/CONTROLLER_SEVER='10.192.20.16'/g" $WORKSPACE/uranus/ci/pt/aiwan-master/core/settings.py
+                sed -i "s/TEST_SEVER =.*/TEST_SEVER='10.192.20.16'/g" $WORKSPACE/uranus/ci/pt/aiwan-master/core/settings.py
+                export PYTHONPATH=$WORKSPACE/uranus/ci/pt/aiwan-master:$WORKSPACE/src/erlang
+                env |grep PYTHONPATH
+                cd $WORKSPACE/src/erlang;pwd
+                robot -L trace --include NOTdebug --outputdir $WORKSPACE/output  --variablefile $WORKSPACE/src/erlang/erlang/config/ft_uranus.yaml --variable repo_path:$WORKSPACE/src/erlang --variable aiwan_master_path:$WORKSPACE/uranus/ci/pt/aiwan-master:$WORKSPACE/src/erlang erlang/ft_testcase
+                '''
+            }
+        }
+
+    }
+
+    post {
+        always {
+            node ('uranus_ft_new') {
+                archiveArtifacts 'output/*'
+            }
+        }
+    }
+}
